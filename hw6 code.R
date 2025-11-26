@@ -1,3 +1,8 @@
+library(tidyverse)
+library(p8105.datasets)
+library(ggplot2)
+library(broom)
+
 ## Problem 1
 
 # Cleaning data
@@ -49,26 +54,112 @@ fit_logistic_model =
 # Run the function on all cities
 city_results =
   city_summary |>
-  nest(data = -city) |> 
+  nest(data = -city_state) |> 
   mutate(model_results = map(data, fit_logistic_model)) |> 
   unnest(model_results) |> 
   filter(term == "victim_sexMale") |> 
-  select(city, estimate, conf.low, conf.high)
+  select(city_state, estimate, conf.low, conf.high)
 
 knitr::kable(city_results)
 
 # Plot
 city_results |>
-  mutate(city = fct_reorder(city, estimate)) |>
-  ggplot(aes(x = city, y = estimate)) +
+  mutate(city_state = fct_reorder(city_state, estimate)) |>
+  ggplot(aes(x = city_state, y = estimate)) +
   geom_hline(yintercept = 1, linetype = "dashed", color = "red") +
   geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.2) +
   geom_point() +
   coord_flip() +
   labs(
     title = "Odds Ratio for Solving Homicides \n(Male vs Female Victims)",
-    x = "City",
+    x = "City_State",
     y = "Estimated Odds Ratio (95% CI)"
   ) +
   theme_minimal() +
   theme(axis.text.y = element_text(size = 8))
+
+## Problem 2
+data("weather_df")
+
+get_estimates = function(data) {
+  boot_sample = data |> 
+    slice_sample(prop = 1, replace = TRUE)
+  
+  fit = lm(tmax ~ tmin + prcp, data = boot_sample)
+
+  r_squared = glance(fit) |> 
+    pull(r.squared)
+
+  coeffs = broom::tidy(fit)
+  
+  # Extract beta_1 (tmin) and beta_2 (prcp)
+  beta_1 = coeffs |> 
+    filter(term == "tmin") |> 
+    pull(estimate)
+  
+  beta_2 = coeffs |> 
+    filter(term == "prcp") %>%
+    pull(estimate)
+  
+  # Calculate the ratio
+  beta_ratio = beta_1 / beta_2
+  
+  # Return the results as a named list or data frame row
+  tibble(
+    r_squared = r_squared,
+    beta_ratio = beta_ratio
+  )
+}
+
+# Set seed for reproducibility
+set.seed(20251125)
+
+# Perform 5000 bootstrap iterations
+bootstrap_results =
+  map(1:5000, ~ get_estimates(weather_df)) |> 
+  list_rbind() 
+
+# Plotting
+bootstrap_results |> 
+  ggplot(aes(x = r_squared)) +
+  geom_density(fill = "steelblue", alpha = 0.7) +
+  labs(
+    title = expression("Bootstrap Distribution of" ~ R^2),
+    x = expression(R^2 ~ "Estimate"),
+    y = "Density"
+  ) +
+  theme_minimal()
+
+bootstrap_results |> 
+  ggplot(aes(x = beta_ratio)) +
+  geom_density(fill = "coral", alpha = 0.7) +
+  labs(
+    title = expression("Bootstrap Distribution of" ~ hat(beta)[1] / hat(beta)[2]),
+    x = expression(hat(beta)[1] / hat(beta)[2] ~ "Estimate"),
+    y = "Density"
+  ) +
+  theme_minimal()
+
+# Calculate the 95% CI for r^2
+r_squared_ci =
+  bootstrap_results |> 
+  summarise(
+    lower_ci = quantile(r_squared, 0.025),
+    upper_ci = quantile(r_squared, 0.975)
+  )
+
+knitr::kable(r_squared_ci)
+
+# Calculate the 95% CI for beta_ratio
+beta_ratio_ci =
+  bootstrap_results |> 
+  summarise(
+    lower_ci = quantile(beta_ratio, 0.025),
+    upper_ci = quantile(beta_ratio, 0.975)
+  )
+
+knitr::kable(beta_ratio_ci)
+
+## Problem 3
+birthweight_df =
+  read_csv("hw6 data/birthweight.csv")
