@@ -2,6 +2,8 @@ library(tidyverse)
 library(p8105.datasets)
 library(ggplot2)
 library(broom)
+library(modelr)
+library(glmnet)
 
 ## Problem 1
 
@@ -162,4 +164,87 @@ knitr::kable(beta_ratio_ci)
 
 ## Problem 3
 birthweight_df =
-  read_csv("hw6 data/birthweight.csv")
+  read_csv("hw6 data/birthweight.csv") |> 
+  janitor::clean_names() |>
+  mutate(
+    babysex = 
+      case_match(babysex,
+                 1 ~ "male",
+                 2 ~ "female"
+      ),
+    babysex = fct_infreq(babysex),
+    frace = 
+      case_match(frace,
+                 1 ~ "white",
+                 2 ~ "black", 
+                 3 ~ "asian", 
+                 4 ~ "puerto_rican", 
+                 8 ~ "other"),
+    frace = fct_infreq(frace),
+    mrace = 
+      case_match(mrace,
+                 1 ~ "white",
+                 2 ~ "black", 
+                 3 ~ "asian", 
+                 4 ~ "puerto_rican",
+                 8 ~ "other"),
+    mrace = fct_infreq(mrace),
+    malform = as.logical(malform))
+
+# running stepwise
+full_model = lm(bwt ~ ., data = birthweight_df)
+null_model = lm(bwt ~ 1, data = birthweight_df)
+
+final_model = 
+  step(null_model, scope = list(lower = null_model, upper = full_model), 
+                   direction = "both", trace = 0)
+summary(final_model)
+
+# plotting
+birthweight_df = birthweight_df |> 
+  add_predictions(final_model, var = "pred") |> 
+  add_residuals(final_model, var = "resid")
+
+ggplot(birthweight_df, aes(x = pred, y = resid)) +
+  geom_point(alpha = 0.6) +
+  geom_hline(yintercept = 0, color = "red", linetype = "dashed") +
+  labs(
+    x = "Fitted Values",
+    y = "Residuals",
+    title = "Residuals vs Fitted Values (Stepwise model)"
+  ) +
+  theme_minimal()
+
+# comparing each other models
+# M1 My stepwise model
+M1_formula = formula(final_model)
+# M2 (Simple)
+M2_formula = bwt ~ blength + gaweeks
+# M3 (Complex, with all interactions)
+M3_formula = bwt ~ (bhead + blength + babysex)^3 
+
+model_formulas =
+  tibble(
+  model_name = c("M1_Stepwise_Proxy", "M2_Simple", "M3_Complex"),
+  formula = list(M1_formula, M2_formula, M3_formula)
+)
+
+# monte carlo validating
+cv_results =
+  birthweight_df |>
+  crossv_mc(n = 100) |>
+  mutate(models = list(model_formulas)) |>
+  unnest(models) |>
+  mutate(
+    model_fit = map2(formula, train, ~ lm(.x, data = as_tibble(.y)))
+  ) |>
+  mutate(
+    rmse = map2_dbl(model_fit, test, ~ modelr::rmse(.x, data = as_tibble(.y)))
+  ) |>
+  # results
+  group_by(model_name) |>
+  summarise(
+    avg_cv_rmse = mean(rmse, na.rm = TRUE)
+  )
+
+print(cv_results)
